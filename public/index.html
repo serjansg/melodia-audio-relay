@@ -31,6 +31,14 @@
     margin-top: 20px;
   }
   button:disabled { opacity: 0.5; cursor: default; }
+  button.alerta {
+    background: #d68a3a;
+    animation: pulso 1.2s infinite;
+  }
+  @keyframes pulso {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+  }
   #status { margin-top: 20px; font-size: 14px; color: #6b5d4f; }
   .dot {
     display: inline-block;
@@ -57,55 +65,96 @@
     const statusText = document.getElementById("statusText");
     const player = document.getElementById("player");
 
-    let escuchando = false;      // true = el usuario quiere estar conectado
+    let escuchando = false;   // el usuario le dio play, queremos estar conectados
+    let vivo = false;         // ya empezó a sonar al menos una vez
     let reintentoPendiente = null;
+
+    // --- "Vigilante": revisa que el audio realmente esté avanzando ---
+    // No confiamos solo en los eventos del navegador (a veces no avisan
+    // cuando se corta una transmisión en vivo) -- revisamos directamente
+    // si el tiempo de reproducción sigue avanzando.
+    let ultimoTiempo = -1;
+    let chequeosSinAvance = 0;
+
+    setInterval(() => {
+      if (!escuchando || !vivo || reintentoPendiente) return;
+
+      if (player.currentTime === ultimoTiempo) {
+        chequeosSinAvance++;
+        if (chequeosSinAvance >= 2) {
+          // ~6-8 segundos sin avanzar: se cortó, aunque el navegador
+          // no haya avisado con un evento de error.
+          vivo = false;
+          chequeosSinAvance = 0;
+          programarReintentoSilencioso();
+        }
+      } else {
+        ultimoTiempo = player.currentTime;
+        chequeosSinAvance = 0;
+      }
+    }, 3000);
 
     function urlStream() {
       return `/stream?t=${Date.now()}`;
     }
 
-    function conectar() {
+    function conectar(silencioso) {
       dot.classList.remove("live");
       statusText.textContent = "Conectando...";
+      ultimoTiempo = -1;
+      chequeosSinAvance = 0;
       player.src = urlStream();
-      player.play().catch(() => {
-        // El navegador a veces bloquea el autoplay en reconexiones
-        // automáticas silenciosas; no es un error grave, reintentamos.
-        programarReintento();
-      });
+
+      const promesa = player.play();
+      if (promesa && promesa.catch) {
+        promesa.catch(() => {
+          if (silencioso) mostrarBotonReconectar();
+        });
+      }
     }
 
-    function programarReintento() {
+    function mostrarBotonReconectar() {
+      if (reintentoPendiente) clearTimeout(reintentoPendiente);
+      reintentoPendiente = null;
+      btn.disabled = false;
+      btn.textContent = "🔄 Toca para reconectar";
+      btn.classList.add("alerta");
+      statusText.textContent = "Se cortó la conexión";
+    }
+
+    function programarReintentoSilencioso() {
       if (!escuchando || reintentoPendiente) return;
       statusText.textContent = "Reconectando...";
       reintentoPendiente = setTimeout(() => {
         reintentoPendiente = null;
-        if (escuchando) conectar();
+        if (escuchando) conectar(true);
       }, 2000);
     }
 
     btn.addEventListener("click", () => {
       escuchando = true;
       btn.disabled = true;
+      btn.classList.remove("alerta");
       btn.textContent = "🎧 Escuchando";
-      conectar();
+      conectar(false);
     });
 
     player.addEventListener("playing", () => {
+      vivo = true;
       dot.classList.add("live");
       statusText.textContent = "En vivo 🎵";
+      btn.disabled = true;
+      btn.classList.remove("alerta");
+      btn.textContent = "🎧 Escuchando";
     });
 
     player.addEventListener("waiting", () => {
       statusText.textContent = "Cargando...";
     });
 
-    // Estos tres eventos pasan cuando el host se reconecta (cortamos su
-    // conexión a propósito del lado del servidor) o cuando hay cualquier
-    // corte de red -- en todos los casos, reconectamos solos.
-    player.addEventListener("stalled", programarReintento);
-    player.addEventListener("error", programarReintento);
-    player.addEventListener("ended", programarReintento);
+    player.addEventListener("stalled", programarReintentoSilencioso);
+    player.addEventListener("error", programarReintentoSilencioso);
+    player.addEventListener("ended", programarReintentoSilencioso);
   </script>
 </body>
 </html>
