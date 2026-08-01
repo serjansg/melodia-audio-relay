@@ -67,25 +67,12 @@ wssHost.on("connection", (ws) => {
   }
   hostSocket = ws;
 
-  // Nueva transmisión: reiniciamos la caché del encabezado
-  initChunks = [];
-  initBytes = 0;
-  initCapturado = false;
-
-  // Si ya había oyentes conectados de una transmisión anterior, hay que
-  // cortarles la conexión a propósito -- técnicamente esto es un stream
-  // nuevo (con su propio encabezado nuevo), y si seguimos empujándoles
-  // datos sin que reinicien su conexión, su navegador no va a poder
-  // decodificarlo bien. Al cerrar su conexión, la página (con
-  // reconexión automática) los vuelve a conectar solos y reciben el
-  // encabezado correcto de este nuevo stream.
-  if (oyentesHttp.size > 0) {
-    console.log(`[HOST] reconectado, reiniciando ${oyentesHttp.size} oyente(s)`);
-    for (const res of oyentesHttp) {
-      res.end();
-    }
-    oyentesHttp.clear();
-  }
+  // NOTA IMPORTANTE: ffmpeg nunca se reinicia del lado del host, solo se
+  // reconecta la conexión a internet. Por eso el audio sigue siendo el
+  // MISMO flujo continuo de siempre -- no hay que capturar un encabezado
+  // nuevo ni desconectar a los oyentes en cada reconexión. El encabezado
+  // real se captura UNA sola vez, la primera vez que arranca la
+  // transmisión, y sirve para toda la sesión.
 
   ws.on("message", (data) => {
     if (!initCapturado) {
