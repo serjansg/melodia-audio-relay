@@ -49,6 +49,12 @@
     margin-right: 6px;
   }
   .dot.live { background: #4caf50; }
+  #volumenBox { margin-top: 24px; display: flex; align-items: center; gap: 10px; }
+  #volumenBox input[type="range"] {
+    width: 160px;
+    accent-color: #b87333;
+  }
+  #volumenLabel { font-size: 13px; color: #a89684; min-width: 34px; text-align: right; }
 </style>
 </head>
 <body>
@@ -57,6 +63,12 @@
   <button id="btnPlay">▶ Escuchar</button>
   <div id="status"><span class="dot" id="dot"></span><span id="statusText">Desconectado</span></div>
 
+  <div id="volumenBox">
+    <span>🔉</span>
+    <input type="range" id="volumen" min="0" max="100" value="100">
+    <span id="volumenLabel">100%</span>
+  </div>
+
   <audio id="player" preload="none"></audio>
 
   <script>
@@ -64,6 +76,25 @@
     const dot = document.getElementById("dot");
     const statusText = document.getElementById("statusText");
     const player = document.getElementById("player");
+    const sliderVolumen = document.getElementById("volumen");
+    const volumenLabel = document.getElementById("volumenLabel");
+
+    // Volumen personal: solo afecta lo que escucha ESTA persona en su
+    // propio navegador. No tiene ningún efecto sobre el host ni sobre
+    // los demás oyentes conectados.
+    const volumenGuardado = localStorage.getItem("melodia_volumen");
+    if (volumenGuardado !== null) {
+      sliderVolumen.value = volumenGuardado;
+      volumenLabel.textContent = `${volumenGuardado}%`;
+    }
+    player.volume = sliderVolumen.value / 100;
+
+    sliderVolumen.addEventListener("input", () => {
+      const valor = sliderVolumen.value;
+      player.volume = valor / 100;
+      volumenLabel.textContent = `${valor}%`;
+      localStorage.setItem("melodia_volumen", valor);
+    });
 
     let escuchando = false;   // el usuario le dio play, queremos estar conectados
     let vivo = false;         // ya empezó a sonar al menos una vez
