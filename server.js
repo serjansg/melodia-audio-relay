@@ -28,32 +28,29 @@ const server = http.createServer(app);
 // Sirve la página del oyente (public/index.html)
 app.use(express.static(path.join(__dirname, "public")));
 
-// Dos "salas" de WebSocket: una para el host, otra para los oyentes
+// Solo necesitamos WebSocket para el HOST (mandar el audio hacia el
+// servidor). Los oyentes reciben el audio por HTTP normal, como una
+// radio por internet clásica -- el navegador lo maneja solo, sin que
+// tengamos que programar la reproducción a mano.
 const wssHost = new WebSocket.Server({ noServer: true });
-const wssListen = new WebSocket.Server({ noServer: true });
 
 let hostSocket = null;
-const listeners = new Set();
+const oyentesHttp = new Set(); // objetos "response" de cada oyente conectado
 
 // Los primeros bytes que manda el host contienen el "encabezado" del
 // stream (info necesaria para que el navegador sepa decodificar el audio).
-// Si alguien se conecta DESPUÉS de que ese encabezado ya se mandó, nunca
-// lo recibiría y el audio no sonaría. Por eso lo guardamos en caché acá,
-// y se lo mandamos a cada oyente nuevo apenas se conecta.
+// Lo guardamos para mandárselo a cada oyente nuevo apenas se conecta,
+// sin importar cuándo se una a la transmisión.
 let initChunks = [];
 let initBytes = 0;
 let initCapturado = false;
 const INIT_MAX_BYTES = 32 * 1024; // 32 KB es de sobra para el encabezado
 
-// --- Ruteo manual de las conexiones WebSocket según la URL ---
+// --- Ruteo manual de la conexión WebSocket del host ---
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/host") {
     wssHost.handleUpgrade(req, socket, head, (ws) => {
       wssHost.emit("connection", ws, req);
-    });
-  } else if (req.url === "/listen") {
-    wssListen.handleUpgrade(req, socket, head, (ws) => {
-      wssListen.emit("connection", ws, req);
     });
   } else {
     socket.destroy();
@@ -76,8 +73,6 @@ wssHost.on("connection", (ws) => {
   initCapturado = false;
 
   ws.on("message", (data) => {
-    // Guardamos los primeros bytes como "encabezado" para poder
-    // repetírselo a oyentes que se conecten más tarde.
     if (!initCapturado) {
       initChunks.push(data);
       initBytes += data.length;
@@ -87,11 +82,9 @@ wssHost.on("connection", (ws) => {
       }
     }
 
-    // Reenvía cada chunk de audio a todos los oyentes conectados
-    for (const listener of listeners) {
-      if (listener.readyState === WebSocket.OPEN) {
-        listener.send(data);
-      }
+    // Manda el audio a cada oyente conectado por HTTP, en vivo
+    for (const res of oyentesHttp) {
+      res.write(data);
     }
   });
 
@@ -101,23 +94,27 @@ wssHost.on("connection", (ws) => {
   });
 });
 
-// --- Conexión de un OYENTE (un amigo escuchando) ---
-wssListen.on("connection", (ws) => {
-  console.log(`[LISTENER] conectado (total: ${listeners.size + 1})`);
+// --- Endpoint de streaming para los OYENTES (radio por internet clásica) ---
+app.get("/stream", (req, res) => {
+  console.log(`[LISTENER] conectado (total: ${oyentesHttp.size + 1})`);
 
-  // Si ya hay una transmisión en curso, le mandamos primero el encabezado
-  // guardado, para que su navegador pueda decodificar el audio que sigue.
-  if (initChunks.length > 0) {
-    for (const chunk of initChunks) {
-      ws.send(chunk);
-    }
+  res.writeHead(200, {
+    "Content-Type": "audio/webm",
+    "Cache-Control": "no-cache, no-store",
+    "Connection": "keep-alive",
+  });
+
+  // Le mandamos primero el encabezado guardado, así puede decodificar
+  // el audio que sigue, sin importar cuándo se conectó.
+  for (const chunk of initChunks) {
+    res.write(chunk);
   }
 
-  listeners.add(ws);
+  oyentesHttp.add(res);
 
-  ws.on("close", () => {
-    listeners.delete(ws);
-    console.log(`[LISTENER] desconectado (total: ${listeners.size})`);
+  req.on("close", () => {
+    oyentesHttp.delete(res);
+    console.log(`[LISTENER] desconectado (total: ${oyentesHttp.size})`);
   });
 });
 
@@ -125,7 +122,7 @@ wssListen.on("connection", (ws) => {
 app.get("/status", (req, res) => {
   res.json({
     host_conectado: hostSocket !== null,
-    oyentes: listeners.size,
+    oyentes: oyentesHttp.size,
   });
 });
 
