@@ -49,75 +49,53 @@
   <button id="btnPlay">▶ Escuchar</button>
   <div id="status"><span class="dot" id="dot"></span><span id="statusText">Desconectado</span></div>
 
+  <audio id="player" preload="none"></audio>
+
   <script>
     const btn = document.getElementById("btnPlay");
     const dot = document.getElementById("dot");
     const statusText = document.getElementById("statusText");
+    const player = document.getElementById("player");
 
-    let audioEl = null;
-    let mediaSource = null;
-    let sourceBuffer = null;
-    let ws = null;
-    let queue = [];
-
-    function conectar() {
-      // Construye la URL del WebSocket a partir de la URL actual de la página
-      const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocolo}//${location.host}/listen`;
-
-      ws = new WebSocket(wsUrl);
-      ws.binaryType = "arraybuffer";
-
-      audioEl = new Audio();
-      audioEl.autoplay = true;
-
-      mediaSource = new MediaSource();
-      audioEl.src = URL.createObjectURL(mediaSource);
-
-      mediaSource.addEventListener("sourceopen", () => {
-        // El host manda audio codificado en Opus dentro de contenedor WebM
-        sourceBuffer = mediaSource.addSourceBuffer('audio/webm; codecs="opus"');
-        sourceBuffer.addEventListener("updateend", procesarCola);
-      });
-
-      ws.onopen = () => {
-        statusText.textContent = "Conectado, esperando audio...";
-        dot.classList.add("live");
-      };
-
-      ws.onmessage = (event) => {
-        queue.push(new Uint8Array(event.data));
-        procesarCola();
-        if (statusText.textContent !== "En vivo 🎵") {
-          statusText.textContent = "En vivo 🎵";
-        }
-      };
-
-      ws.onclose = () => {
-        statusText.textContent = "Desconectado";
-        dot.classList.remove("live");
-      };
-
-      ws.onerror = () => {
-        statusText.textContent = "Error de conexión";
-      };
-    }
-
-    function procesarCola() {
-      if (!sourceBuffer || sourceBuffer.updating || queue.length === 0) return;
-      const chunk = queue.shift();
-      try {
-        sourceBuffer.appendBuffer(chunk);
-      } catch (e) {
-        console.error("Error al reproducir chunk:", e);
-      }
+    // Cache-buster: cada clic pide una conexión nueva, para evitar que
+    // el navegador reutilice una conexión vieja o cacheada.
+    function urlStream() {
+      return `/stream?t=${Date.now()}`;
     }
 
     btn.addEventListener("click", () => {
       btn.disabled = true;
       btn.textContent = "Conectando...";
-      conectar();
-      setTimeout(() => { btn.textContent = "🎧 Escuchando"; }, 500);
+      statusText.textContent = "Conectando...";
+
+      player.src = urlStream();
+      player.play().catch((e) => {
+        console.error("Error al reproducir:", e);
+        statusText.textContent = "Error, intenta de nuevo";
+        btn.disabled = false;
+        btn.textContent = "▶ Escuchar";
+      });
+    });
+
+    player.addEventListener("playing", () => {
+      dot.classList.add("live");
+      statusText.textContent = "En vivo 🎵";
+      btn.textContent = "🎧 Escuchando";
+    });
+
+    player.addEventListener("waiting", () => {
+      statusText.textContent = "Cargando...";
+    });
+
+    player.addEventListener("stalled", () => {
+      statusText.textContent = "Conexión inestable...";
+    });
+
+    player.addEventListener("error", () => {
+      dot.classList.remove("live");
+      statusText.textContent = "Se cortó la conexión";
+      btn.disabled = false;
+      btn.textContent = "▶ Reintentar";
     });
   </script>
 </body>
