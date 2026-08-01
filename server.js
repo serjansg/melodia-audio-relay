@@ -72,6 +72,21 @@ wssHost.on("connection", (ws) => {
   initBytes = 0;
   initCapturado = false;
 
+  // Si ya había oyentes conectados de una transmisión anterior, hay que
+  // cortarles la conexión a propósito -- técnicamente esto es un stream
+  // nuevo (con su propio encabezado nuevo), y si seguimos empujándoles
+  // datos sin que reinicien su conexión, su navegador no va a poder
+  // decodificarlo bien. Al cerrar su conexión, la página (con
+  // reconexión automática) los vuelve a conectar solos y reciben el
+  // encabezado correcto de este nuevo stream.
+  if (oyentesHttp.size > 0) {
+    console.log(`[HOST] reconectado, reiniciando ${oyentesHttp.size} oyente(s)`);
+    for (const res of oyentesHttp) {
+      res.end();
+    }
+    oyentesHttp.clear();
+  }
+
   ws.on("message", (data) => {
     if (!initCapturado) {
       initChunks.push(data);
