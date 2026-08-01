@@ -57,46 +57,55 @@
     const statusText = document.getElementById("statusText");
     const player = document.getElementById("player");
 
-    // Cache-buster: cada clic pide una conexión nueva, para evitar que
-    // el navegador reutilice una conexión vieja o cacheada.
+    let escuchando = false;      // true = el usuario quiere estar conectado
+    let reintentoPendiente = null;
+
     function urlStream() {
       return `/stream?t=${Date.now()}`;
     }
 
-    btn.addEventListener("click", () => {
-      btn.disabled = true;
-      btn.textContent = "Conectando...";
+    function conectar() {
+      dot.classList.remove("live");
       statusText.textContent = "Conectando...";
-
       player.src = urlStream();
-      player.play().catch((e) => {
-        console.error("Error al reproducir:", e);
-        statusText.textContent = "Error, intenta de nuevo";
-        btn.disabled = false;
-        btn.textContent = "▶ Escuchar";
+      player.play().catch(() => {
+        // El navegador a veces bloquea el autoplay en reconexiones
+        // automáticas silenciosas; no es un error grave, reintentamos.
+        programarReintento();
       });
+    }
+
+    function programarReintento() {
+      if (!escuchando || reintentoPendiente) return;
+      statusText.textContent = "Reconectando...";
+      reintentoPendiente = setTimeout(() => {
+        reintentoPendiente = null;
+        if (escuchando) conectar();
+      }, 2000);
+    }
+
+    btn.addEventListener("click", () => {
+      escuchando = true;
+      btn.disabled = true;
+      btn.textContent = "🎧 Escuchando";
+      conectar();
     });
 
     player.addEventListener("playing", () => {
       dot.classList.add("live");
       statusText.textContent = "En vivo 🎵";
-      btn.textContent = "🎧 Escuchando";
     });
 
     player.addEventListener("waiting", () => {
       statusText.textContent = "Cargando...";
     });
 
-    player.addEventListener("stalled", () => {
-      statusText.textContent = "Conexión inestable...";
-    });
-
-    player.addEventListener("error", () => {
-      dot.classList.remove("live");
-      statusText.textContent = "Se cortó la conexión";
-      btn.disabled = false;
-      btn.textContent = "▶ Reintentar";
-    });
+    // Estos tres eventos pasan cuando el host se reconecta (cortamos su
+    // conexión a propósito del lado del servidor) o cuando hay cualquier
+    // corte de red -- en todos los casos, reconectamos solos.
+    player.addEventListener("stalled", programarReintento);
+    player.addEventListener("error", programarReintento);
+    player.addEventListener("ended", programarReintento);
   </script>
 </body>
 </html>
