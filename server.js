@@ -35,6 +35,16 @@ const wssListen = new WebSocket.Server({ noServer: true });
 let hostSocket = null;
 const listeners = new Set();
 
+// Los primeros bytes que manda el host contienen el "encabezado" del
+// stream (info necesaria para que el navegador sepa decodificar el audio).
+// Si alguien se conecta DESPUÉS de que ese encabezado ya se mandó, nunca
+// lo recibiría y el audio no sonaría. Por eso lo guardamos en caché acá,
+// y se lo mandamos a cada oyente nuevo apenas se conecta.
+let initChunks = [];
+let initBytes = 0;
+let initCapturado = false;
+const INIT_MAX_BYTES = 32 * 1024; // 32 KB es de sobra para el encabezado
+
 // --- Ruteo manual de las conexiones WebSocket según la URL ---
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/host") {
@@ -60,7 +70,23 @@ wssHost.on("connection", (ws) => {
   }
   hostSocket = ws;
 
+  // Nueva transmisión: reiniciamos la caché del encabezado
+  initChunks = [];
+  initBytes = 0;
+  initCapturado = false;
+
   ws.on("message", (data) => {
+    // Guardamos los primeros bytes como "encabezado" para poder
+    // repetírselo a oyentes que se conecten más tarde.
+    if (!initCapturado) {
+      initChunks.push(data);
+      initBytes += data.length;
+      if (initBytes >= INIT_MAX_BYTES) {
+        initCapturado = true;
+        console.log(`[HOST] encabezado capturado (${initBytes} bytes)`);
+      }
+    }
+
     // Reenvía cada chunk de audio a todos los oyentes conectados
     for (const listener of listeners) {
       if (listener.readyState === WebSocket.OPEN) {
@@ -78,6 +104,15 @@ wssHost.on("connection", (ws) => {
 // --- Conexión de un OYENTE (un amigo escuchando) ---
 wssListen.on("connection", (ws) => {
   console.log(`[LISTENER] conectado (total: ${listeners.size + 1})`);
+
+  // Si ya hay una transmisión en curso, le mandamos primero el encabezado
+  // guardado, para que su navegador pueda decodificar el audio que sigue.
+  if (initChunks.length > 0) {
+    for (const chunk of initChunks) {
+      ws.send(chunk);
+    }
+  }
+
   listeners.add(ws);
 
   ws.on("close", () => {
